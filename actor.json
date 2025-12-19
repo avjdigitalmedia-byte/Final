@@ -1,0 +1,9 @@
+{
+    "actorSpecification": 1,
+    "name": "creator-email-deep-search",
+    "title": "Creator Email Deep Search (IG/TikTok)",
+    "description": "Finds hidden emails for influencers by performing a 'Deep Search' on their Link-in-Bio pages (Linktree, Carrd, etc.).",
+    "version": "0.1",
+    "dockerfile": "./Dockerfile",
+    "input": "./input_schema.json"
+}

@@ -1,0 +1,3 @@
+apify
+requests
+beautifulsoup4

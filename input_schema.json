@@ -1,0 +1,24 @@
+{
+    "title": "Input Schema",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "hashtag": {
+            "title": "Hashtag to Search",
+            "type": "string",
+            "description": "Currently supports basic hashtag search simulation.",
+            "editor": "textfield",
+            "prefill": "realestate"
+        },
+        "max_posts": {
+            "title": "Max Posts to Scan",
+            "type": "integer",
+            "description": "The number of profiles to fetch from the source.",
+            "editor": "number",
+            "prefill": 20
+        }
+    },
+    "required": [
+        "hashtag"
+    ]
+}
