@@ -70,15 +70,23 @@ async def main():
         dataset_client = Actor.new_client().dataset(run_posts.default_dataset_id)
         items_page = await dataset_client.list_items()
         
+        Actor.log.info(f"Retrieved {len(items_page.items)} items from Instagram Scraper dataset.")
+        
+        if items_page.items:
+            # DEBUG: Print the keys of the first item to see what we got
+            first_item = items_page.items[0]
+            Actor.log.info(f"DEBUG: First item keys: {list(first_item.keys())}")
+            Actor.log.info(f"DEBUG: First item content sample: {str(first_item)[:200]}...")
+
         usernames = set()
         for item in items_page.items:
             # Try different locations for username
-            u = item.get('owner', {}).get('username') or item.get('username')
+            u = item.get('owner', {}).get('username') or item.get('username') or item.get('ownerUsername')
             if u:
                 usernames.add(u)
         
         if not usernames:
-            Actor.log.warning("No usernames found in the posts.")
+            Actor.log.warning("No usernames found in the posts. Please check the DEBUG logs above to see the data structure.")
             return
 
         Actor.log.info(f"Step 2: Found {len(usernames)} unique users. Scraping their profiles now...")
