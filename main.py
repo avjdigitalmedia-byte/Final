@@ -47,13 +47,11 @@ async def main():
         hashtag = actor_input.get('hashtag', 'mortgage')
         max_posts = actor_input.get('max_posts', 20)
         
-        Actor.log.info(f'Searching for hashtag: {hashtag} with limit: {max_posts}')
+        Actor.log.info(f'Step 1: Searching for hashtag: {hashtag} to find users...')
 
-        # 2. Call Instagram Scraper (using 'apify/instagram-scraper')
-        # We start the scraper and wait for it to finish
+        # 2. Call Instagram Scraper (to get posts and usernames)
         try:
-            Actor.log.info('Calling apify/instagram-scraper...')
-            run = await Actor.call('apify/instagram-scraper', {
+            run_posts = await Actor.call('apify/instagram-scraper', {
                 "resultsType": "posts",
                 "search": hashtag,
                 "searchType": "hashtag",
@@ -64,66 +62,72 @@ async def main():
             Actor.log.error(f'Failed to call instagram-scraper: {e}')
             return
 
-        # 'run' is an ActorRun object, accessed via attributes, not .get()
-        if run.status != 'SUCCEEDED':
-            Actor.log.error(f'Instagram Scraper run failed with status: {run.status}')
+        if run_posts.status != 'SUCCEEDED':
+            Actor.log.error(f'Instagram Scraper run failed with status: {run_posts.status}')
             return
         
-        # 3. Process Results
-        dataset_id = run.default_dataset_id
-        Actor.log.info(f"Processing results from run {run.id} (Dataset: {dataset_id})...")
-        dataset_client = Actor.new_client().dataset(dataset_id)
+        # 3. Extract Usernames
+        dataset_client = Actor.new_client().dataset(run_posts.default_dataset_id)
+        items_page = await dataset_client.list_items()
         
-        profiles_processed = 0
+        usernames = set()
+        for item in items_page.items:
+            # Try different locations for username
+            u = item.get('owner', {}).get('username') or item.get('username')
+            if u:
+                usernames.add(u)
+        
+        if not usernames:
+            Actor.log.warning("No usernames found in the posts.")
+            return
+
+        Actor.log.info(f"Step 2: Found {len(usernames)} unique users. Scraping their profiles now...")
+
+        # 4. Scrape PROFILES (This is the new step)
+        # We use 'apify/instagram-profile-scraper' (or similar)
+        # Note: We pass the list of usernames directly
+        try:
+            run_profiles = await Actor.call('apify/instagram-profile-scraper', {
+                "usernames": list(usernames),
+                "proxy": { "useApifyProxy": True }
+            })
+        except Exception as e:
+            Actor.log.error(f"Failed to scrape profiles: {e}")
+            return
+
+        if run_profiles.status != 'SUCCEEDED':
+            Actor.log.error(f'Profile Scraper run failed. Status: {run_profiles.status}')
+            return
+
+        # 5. Process Profile Results
+        profile_dataset_client = Actor.new_client().dataset(run_profiles.default_dataset_id)
+        profile_items = await profile_dataset_client.list_items()
+        
         emails_found = 0
         
-        # Fetch all items to avoid async iterator issues if any
-        items_page = await dataset_client.list_items()
-        item_list = items_page.items
-        Actor.log.info(f"Retrieved {len(item_list)} items from Instagram Scraper.")
-
-        if len(item_list) == 0:
-            Actor.log.warning("No posts found! The instagram-scraper might have been blocked or returned no results.")
-        
-        for item in item_list:
-            # Get user info from the post object
-            owner = item.get('owner', {})
-            username = owner.get('username')
+        for profile in profile_items.items:
+            username = profile.get('username')
+            biography = profile.get('biography', '') or profile.get('highlight_reel_count', '') # Fallback
+            full_name = profile.get('fullName')
+            # Look for external link in profile
+            external_url = profile.get('externalUrl')
             
-            # Fallback for different data structures
-            if not username:
-                username = item.get('username')
-            
-            if not username:
-                continue
+            Actor.log.info(f"Analyzing profile: @{username}")
 
-            full_name = owner.get('full_name') or item.get('fullName')
-            # Note: For 'posts' results, this is usually the POST CAPTION, not the user bio.
-            biography = item.get('caption', '') 
-            
-            Actor.log.info(f"Checking post by @{username}...")
-
-            # Check caption for emails
+            # 1. Emails in Bio
             emails = extract_emails(biography)
-            source = "Caption Text"
-            
-            # Simple link extraction from caption (since we don't have profile bio link here)
-            external_url = None
-            if biography:
-                urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', biography)
-                if urls:
-                    external_url = urls[0]
-            
-            # Deep Search
+            source = "Bio Text"
+
+            # 2. Deep Search (Link in Bio)
             if external_url and not emails:
-                Actor.log.info(f"Deep searching link for {username}: {external_url}")
+                Actor.log.info(f"  -> Deep searching Link-in-Bio: {external_url}")
                 found_emails = scrape_bio_link(external_url)
                 if found_emails:
                     emails = found_emails
-                    source = f"Link in Caption ({external_url})"
+                    source = f"Link in Bio ({external_url})"
             
             if emails:
-                Actor.log.info(f"SUCCESS: Found email for {username}: {emails[0]}")
+                Actor.log.info(f"SUCCESS: Found ({len(emails)}) email(s) for @{username}!")
                 result = {
                     "username": username,
                     "full_name": full_name,
@@ -131,17 +135,16 @@ async def main():
                     "email": emails[0],
                     "all_emails": emails,
                     "source": source,
-                    "hashtag_used": hashtag,
-                    "post_url": item.get('url')
+                    "hashtag_searched": hashtag,
+                    "followers": profile.get('followersCount'),
+                    "bio": biography
                 }
                 await Actor.push_data(result)
                 emails_found += 1
             else:
-                Actor.log.info(f"No email found for {username} in this post/caption.")
+                Actor.log.info(f"  -> No email found.")
 
-            profiles_processed += 1
-                
-        Actor.log.info(f"Done! Scanned {profiles_processed} posts. Found emails for {emails_found} profiles.")
+        Actor.log.info(f"Done! Scanned {len(usernames)} profiles. Found emails for {emails_found} creators.")
 
 if __name__ == '__main__':
     # This is needed for local execution compatibility
