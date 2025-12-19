@@ -64,13 +64,14 @@ async def main():
             Actor.log.error(f'Failed to call instagram-scraper: {e}')
             return
 
-        if run.get('status') != 'SUCCEEDED':
-            Actor.log.error(f'Instagram Scraper run failed with status: {run.get("status")}')
+        # 'run' is an ActorRun object, accessed via attributes, not .get()
+        if run.status != 'SUCCEEDED':
+            Actor.log.error(f'Instagram Scraper run failed with status: {run.status}')
             return
         
         # 3. Process Results
-        dataset_id = run['defaultDatasetId']
-        Actor.log.info(f"Processing results from run {run['id']} (Dataset: {dataset_id})...")
+        dataset_id = run.default_dataset_id
+        Actor.log.info(f"Processing results from run {run.id} (Dataset: {dataset_id})...")
         dataset_client = Actor.new_client().dataset(dataset_id)
         
         profiles_processed = 0
